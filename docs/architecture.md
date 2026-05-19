@@ -111,7 +111,7 @@ Tool Layer
         ↓
 DataFrame Operations
         ↓
-Gemini API
+LLM API
 ```
 
 ---
@@ -172,7 +172,7 @@ The backend is responsible for:
 * Tool execution
 * Validation
 * Structured responses
-* Gemini API communication
+* LLM API communication
 
 The backend acts as the control layer between:
 
@@ -186,7 +186,7 @@ The backend acts as the control layer between:
 
 ## Technology
 
-* Gemini API
+* LLM API
 * Structured prompting
 
 ## Responsibilities
@@ -569,7 +569,7 @@ OpenCode Role:
 * Implementation collaborator
 * Repo-aware coding helper
 
-Gemini Role:
+LLM Role:
 
 * Reasoning engine
 * Tool-calling intelligence

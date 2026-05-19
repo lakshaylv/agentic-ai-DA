@@ -15,3 +15,19 @@ class ToolResponse(BaseModel):
     data: Optional[Any] = None
     metadata: ToolMetadata
     error: Optional[str] = None
+
+
+class ToolSignature(BaseModel):
+    name: str
+    description: str
+    params_schema: dict
+
+
+class LLMDecision(BaseModel):
+    analysis: str
+    next_tool: Optional[str] = None
+    params: dict = {}
+    complete: bool = False
+    chart_type: Optional[str] = None
+    chart_spec: Optional[dict] = None
+    insights: list[str] = []
