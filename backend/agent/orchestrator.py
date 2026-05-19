@@ -23,6 +23,8 @@ def run_analysis(
     conversation = [{"role": "user", "content": query}]
     tool_results = []
     error = None
+    consecutive_failures = 0
+    max_consecutive_failures = 3
 
     for i in range(max_iterations):
         decision = llm_analyze(
@@ -32,7 +34,7 @@ def run_analysis(
         )
 
         if error is None and not decision.complete and not decision.next_tool:
-            error = "LLM returned no next_tool but did not mark complete"
+            error = decision.analysis or "LLM returned no next_tool but did not mark complete"
             break
 
         if decision.complete:
@@ -56,15 +58,27 @@ def run_analysis(
             "response": response.model_dump(),
         })
 
-        conversation.append({"role": "assistant", "content": decision.model_dump_json()})
-        conversation.append({
-            "role": "user",
-            "content": f"Tool '{decision.next_tool}' returned: {response.model_dump_json()}",
-        })
+        assistant_msg = f"Analysis: {decision.analysis}\nCalled tool: {decision.next_tool}"
+        conversation.append({"role": "assistant", "content": assistant_msg})
 
-        if error is None and not response.success:
-            error = f"Tool '{decision.next_tool}' failed: {response.error}"
-            break
+        if not response.success:
+            consecutive_failures += 1
+            if consecutive_failures >= max_consecutive_failures:
+                error = f"Tool '{decision.next_tool}' failed {consecutive_failures} consecutive times: {response.error}"
+                break
+            conversation.append({
+                "role": "user",
+                "content": f"Tool '{decision.next_tool}' failed: {response.error}. Try a different approach or tool.",
+            })
+        else:
+            consecutive_failures = 0
+            tool_output = response.model_dump_json()
+            if len(tool_output) > 800:
+                tool_output = tool_output[:800] + "... [truncated]"
+            conversation.append({
+                "role": "user",
+                "content": f"Tool '{decision.next_tool}' returned: {tool_output}",
+            })
 
     return AnalysisResult(
         session_id=session_id,

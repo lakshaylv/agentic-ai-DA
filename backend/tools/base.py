@@ -28,7 +28,7 @@ class BaseTool(ABC):
             metadata = ToolMetadata(
                 tool_name=self.name,
                 execution_time_ms=elapsed_ms,
-                rows_affected=len(df) if isinstance(df, pd.DataFrame) else None,
+                rows_affected=None,
             )
             return ToolResponse(success=True, data=data, metadata=metadata, error=None)
         except Exception as e:

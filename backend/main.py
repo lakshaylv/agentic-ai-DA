@@ -7,7 +7,7 @@ from backend.services.session_service import session_store
 from backend.services.llm_service import LLMConfig
 from backend.tools.registry import ToolRegistry
 from backend.tools.inspection import SchemaInspector, MissingValueAnalyzer
-from backend.tools.operations import GroupBy, FilterTool
+from backend.tools.operations import GroupBy, FilterTool, DeriveAggregate
 from backend.agent.orchestrator import run_analysis
 
 registry = ToolRegistry()
@@ -15,6 +15,7 @@ registry.register(SchemaInspector())
 registry.register(MissingValueAnalyzer())
 registry.register(GroupBy())
 registry.register(FilterTool())
+registry.register(DeriveAggregate())
 
 llm_config = LLMConfig()
 

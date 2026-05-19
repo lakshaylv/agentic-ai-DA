@@ -7,9 +7,10 @@ from backend.models.schemas import LLMDecision, ToolSignature
 
 @dataclass
 class LLMConfig:
-    provider: str = "gemini"
+    provider: str = "openai"
     api_key: str = ""
-    model: str = "gemini-2.5-flash-lite"
+    model: str = "deepseek/deepseek-v4-flash:free"
+    base_url: str = "https://openrouter.ai/api/v1"
     tools: list[ToolSignature] = field(default_factory=list)
 
 
@@ -18,10 +19,11 @@ You have access to these tools:
 
 {tools_description}
 
-Work step by step:
-1. Choose ONE tool per turn to move toward answering the user's query
-2. After a tool returns results, evaluate them and decide the next step
-3. Only set "complete": true when the original query is fully answered
+Rules:
+1. You MUST call at least one tool before marking complete. You cannot see the data directly.
+2. Most analytical questions require multiple tool calls (inspect schema, look for missing values, group/filter).
+3. Do NOT stop after a single tool call unless the query is fully answered.
+4. Only set "complete": true when the data has been fully analyzed and the query is answered.
 
 Always respond in JSON with this exact structure:
 {{
@@ -34,7 +36,7 @@ Always respond in JSON with this exact structure:
   "insights": []
 }}
 
-When complete, set next_tool to null, complete to true, and include insights and chart data if applicable."""
+Respond ONLY with valid JSON. No markdown, no code fences, no extra text."""
 
 
 def _build_tools_description(tools: list[ToolSignature]) -> str:
@@ -52,23 +54,25 @@ def analyze(
     tools: list[ToolSignature],
     config: LLMConfig,
 ) -> LLMDecision:
-    api_key = config.api_key or os.environ.get("LLM_API_KEY") or os.environ.get("GEMINI_API_KEY", "")
+    api_key = config.api_key or os.environ.get("OPENAI_API_KEY") or os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
-        raise ValueError("LLM_API_KEY or GEMINI_API_KEY must be set")
+        raise ValueError("OPENAI_API_KEY or GEMINI_API_KEY must be set")
 
     tools_description = _build_tools_description(tools)
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(tools_description=tools_description)
 
-    full_messages = [{"role": "user", "parts": [system_prompt]}]
+    full_messages = []
     for msg in messages:
-        role = "user" if msg.get("role") in ("user", "system") else "user"
+        role = "model" if msg.get("role") == "assistant" else "user"
         text = msg.get("content", msg.get("parts", [""]))
         if isinstance(text, list):
             text = " ".join(str(p) for p in text)
         full_messages.append({"role": role, "parts": [text]})
 
     if config.provider == "gemini":
-        return _call_gemini(full_messages, config, api_key)
+        return _call_gemini(full_messages, config, api_key, system_prompt=system_prompt)
+    elif config.provider == "openai":
+        return _call_openai(full_messages, config, api_key, system_prompt=system_prompt)
     else:
         raise ValueError(f"Unsupported provider: {config.provider}")
 
@@ -77,6 +81,7 @@ def _call_gemini(
     messages: list[dict],
     config: LLMConfig,
     api_key: str,
+    system_prompt: str = "",
 ) -> LLMDecision:
     try:
         from google import genai
@@ -87,16 +92,20 @@ def _call_gemini(
 
     contents = []
     for msg in messages:
-        contents.append({"role": "user", "parts": [{"text": msg["parts"][0]}]})
+        contents.append({"role": msg["role"], "parts": [{"text": msg["parts"][0]}]})
+
+    genai_config = {
+        "response_mime_type": "application/json",
+        "temperature": 0.2,
+    }
+    if system_prompt:
+        genai_config["system_instruction"] = system_prompt
 
     try:
         response = client.models.generate_content(
             model=config.model,
             contents=contents,
-            config={
-                "response_mime_type": "application/json",
-                "temperature": 0.2,
-            },
+            config=genai_config,
         )
     except Exception as e:
         error_str = str(e)
@@ -104,12 +113,12 @@ def _call_gemini(
             return LLMDecision(
                 analysis="LLM API quota exhausted. Please wait or switch to a different provider.",
                 next_tool=None,
-                complete=True,
+                complete=False,
             )
         return LLMDecision(
             analysis=f"LLM API error: {error_str}",
             next_tool=None,
-            complete=True,
+            complete=False,
         )
 
     try:
@@ -119,5 +128,80 @@ def _call_gemini(
         return LLMDecision(
             analysis=f"Failed to parse LLM response: {e}",
             next_tool=None,
-            complete=True,
+            complete=False,
+        )
+
+
+def _extract_json(text: str) -> str:
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1] if "\n" in text else text[3:]
+        text = text.rsplit("```", 1)[0] if "```" in text else text
+        text = text.strip()
+    first = text.find("{")
+    last = text.rfind("}")
+    if first != -1 and last != -1 and last > first:
+        text = text[first : last + 1]
+    return text
+
+
+def _call_openai(
+    messages: list[dict],
+    config: LLMConfig,
+    api_key: str,
+    system_prompt: str = "",
+) -> LLMDecision:
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise ImportError("openai not installed. Run: pip install openai")
+
+    client = OpenAI(base_url=config.base_url, api_key=api_key)
+
+    msgs = []
+    if system_prompt:
+        msgs.append({"role": "system", "content": system_prompt})
+    for m in messages:
+        role = "assistant" if m["role"] == "model" else "user"
+        text = m["parts"][0]
+        msgs.append({"role": role, "content": text})
+
+    model = config.model or "deepseek/deepseek-v4-flash:free"
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=msgs,
+            temperature=0.2,
+        )
+    except Exception as e:
+        error_str = str(e)
+        if "insufficient_quota" in error_str or "rate_limit" in error_str.lower():
+            return LLMDecision(
+                analysis="LLM API rate limited or quota exhausted. Please wait or switch provider.",
+                next_tool=None,
+                complete=False,
+            )
+        return LLMDecision(
+            analysis=f"LLM API error: {error_str}",
+            next_tool=None,
+            complete=False,
+        )
+
+    try:
+        content = response.choices[0].message.content
+        if not content:
+            return LLMDecision(
+                analysis="LLM returned empty response",
+                next_tool=None,
+                complete=False,
+            )
+        cleaned = _extract_json(content)
+        data = json.loads(cleaned)
+        return LLMDecision(**data)
+    except (json.JSONDecodeError, Exception) as e:
+        return LLMDecision(
+            analysis=f"Failed to parse LLM response: {e}",
+            next_tool=None,
+            complete=False,
         )
