@@ -56,6 +56,8 @@ class GroupBy(BaseTool):
         else:
             grouped = df.groupby(group_col)[metric].agg(aggregation).reset_index()
         grouped[group_col] = grouped[group_col].astype(str)
+        for col in grouped.select_dtypes(include="number").columns:
+            grouped[col] = grouped[col].round(2)
 
         return {
             "grouped": grouped.to_dict(orient="records"),

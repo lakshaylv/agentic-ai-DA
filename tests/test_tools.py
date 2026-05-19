@@ -1,5 +1,9 @@
 from backend.tools.inspection import SchemaInspector, MissingValueAnalyzer
 from backend.tools.operations import GroupBy, FilterTool, DeriveAggregate
+from backend.tools.analysis import (
+    SortTopK, ValueCounts, SummaryStats, Correlation,
+    DateExtract, PivotTable, Preview, ColumnSelect,
+)
 
 
 class TestSchemaInspector:
@@ -163,3 +167,234 @@ class TestDeriveAggregate:
         tool = DeriveAggregate()
         tool.execute(sample_df, group_col="category", col1="value", col2="score", operation="multiply")
         assert set(sample_df.columns) == original_cols
+
+
+class TestSortTopK:
+    def test_top_by_value(self, sample_df):
+        tool = SortTopK()
+        result = tool.execute(sample_df, sort_col="value")
+        assert result.success
+        assert result.data["sort_col"] == "value"
+        assert result.data["ascending"] is False
+        assert result.data["limit"] == 10
+        assert result.data["sorted"][0]["value"] == 50
+
+    def test_bottom_ascending(self, sample_df):
+        tool = SortTopK()
+        result = tool.execute(sample_df, sort_col="value", ascending=True, limit=2)
+        assert result.success
+        assert len(result.data["sorted"]) == 2
+        assert result.data["sorted"][0]["value"] == 10
+
+    def test_invalid_column(self, sample_df):
+        tool = SortTopK()
+        result = tool.execute(sample_df, sort_col="bad")
+        assert not result.success
+
+    def test_invalid_limit(self, sample_df):
+        tool = SortTopK()
+        result = tool.execute(sample_df, sort_col="value", limit=0)
+        assert not result.success
+
+
+class TestValueCounts:
+    def test_basic_counts(self, sample_df):
+        tool = ValueCounts()
+        result = tool.execute(sample_df, column="category")
+        assert result.success
+        assert result.data["column"] == "category"
+        assert len(result.data["value_counts"]) == 3
+        assert result.data["unique_values"] == 3
+
+    def test_invalid_column(self, sample_df):
+        tool = ValueCounts()
+        result = tool.execute(sample_df, column="bad")
+        assert not result.success
+
+
+class TestSummaryStats:
+    def test_all_numeric(self, sample_df):
+        tool = SummaryStats()
+        result = tool.execute(sample_df)
+        assert result.success
+        cols = {s["column"] for s in result.data["stats"]}
+        assert "value" in cols
+        assert "score" in cols
+        for stat in result.data["stats"]:
+            assert "mean" in stat
+            assert "min" in stat
+            assert "max" in stat
+            assert "std" in stat
+
+    def test_specific_columns(self, sample_df):
+        tool = SummaryStats()
+        result = tool.execute(sample_df, columns=["value"])
+        assert result.success
+        assert result.data["columns_analyzed"] == ["value"]
+
+    def test_non_numeric_column(self, sample_df):
+        tool = SummaryStats()
+        result = tool.execute(sample_df, columns=["category"])
+        assert not result.success
+
+
+class TestCorrelation:
+    def test_pair(self, sample_df):
+        tool = Correlation()
+        result = tool.execute(sample_df, col1="value", col2="score")
+        assert result.success
+        assert isinstance(result.data["correlation"], float)
+        assert -1 <= result.data["correlation"] <= 1
+
+    def test_matrix(self, sample_df):
+        tool = Correlation()
+        result = tool.execute(sample_df)
+        assert result.success
+        assert len(result.data["correlation_matrix"]) == 2
+        assert result.data["method"] == "pearson"
+
+    def test_missing_one_col(self, sample_df):
+        tool = Correlation()
+        result = tool.execute(sample_df, col1="value")
+        assert not result.success
+
+    def test_invalid_column(self, sample_df):
+        tool = Correlation()
+        result = tool.execute(sample_df, col1="value", col2="bad")
+        assert not result.success
+
+    def test_non_numeric_column(self, sample_df):
+        tool = Correlation()
+        result = tool.execute(sample_df, col1="value", col2="category")
+        assert not result.success
+
+    def test_single_numeric_col(self, sample_df):
+        single_col_df = sample_df[["value"]]
+        tool = Correlation()
+        result = tool.execute(single_col_df, col1="value", col2="value")
+        assert not result.success
+
+
+class TestDateExtract:
+    def test_extract_year(self, df_with_dates):
+        tool = DateExtract()
+        result = tool.execute(df_with_dates, column="date", part="year")
+        assert result.success
+        assert result.data["part"] == "year"
+        assert all(r["year"] == "2024" for r in result.data["extracted"])
+
+    def test_extract_month(self, df_with_dates):
+        tool = DateExtract()
+        result = tool.execute(df_with_dates, column="date", part="month")
+        assert result.success
+        months = [int(r["month"]) for r in result.data["extracted"]]
+        assert sorted(months) == [1, 3, 6, 9, 12]
+
+    def test_extract_quarter(self, df_with_dates):
+        tool = DateExtract()
+        result = tool.execute(df_with_dates, column="date", part="quarter")
+        assert result.success
+        assert result.data["total_rows"] == 5
+
+    def test_extract_weekday(self, df_with_dates):
+        tool = DateExtract()
+        result = tool.execute(df_with_dates, column="date", part="weekday")
+        assert result.success
+        assert len(result.data["extracted"]) > 0
+
+    def test_invalid_column(self, sample_df):
+        tool = DateExtract()
+        result = tool.execute(sample_df, column="category", part="year")
+        assert not result.success
+
+    def test_invalid_part(self, df_with_dates):
+        tool = DateExtract()
+        result = tool.execute(df_with_dates, column="date", part="decade")
+        assert not result.success
+
+
+class TestPivotTable:
+    def test_basic_pivot(self, df_wide):
+        tool = PivotTable()
+        result = tool.execute(df_wide, index="region", columns="product", values="sales")
+        assert result.success
+        assert result.data["index"] == "region"
+        assert result.data["columns"] == "product"
+        assert result.data["values"] == "sales"
+        assert result.data["aggregation"] == "sum"
+
+    def test_with_mean(self, df_wide):
+        tool = PivotTable()
+        result = tool.execute(df_wide, index="region", columns="product", values="sales", aggregation="mean")
+        assert result.success
+
+    def test_invalid_column(self, df_wide):
+        tool = PivotTable()
+        result = tool.execute(df_wide, index="bad", columns="product", values="sales")
+        assert not result.success
+
+    def test_non_numeric_values(self, sample_df):
+        tool = PivotTable()
+        result = tool.execute(sample_df, index="category", columns="label", values="label")
+        assert not result.success
+
+    def test_invalid_aggregation(self, df_wide):
+        tool = PivotTable()
+        result = tool.execute(df_wide, index="region", columns="product", values="sales", aggregation="bad")
+        assert not result.success
+
+
+class TestPreview:
+    def test_head(self, sample_df):
+        tool = Preview()
+        result = tool.execute(sample_df)
+        assert result.success
+        assert len(result.data["rows"]) == 5
+        assert result.data["method"] == "head"
+
+    def test_tail(self, sample_df):
+        tool = Preview()
+        result = tool.execute(sample_df, method="tail")
+        assert result.success
+        assert result.data["method"] == "tail"
+
+    def test_sample(self, sample_df):
+        tool = Preview()
+        result = tool.execute(sample_df, method="sample", n=3)
+        assert result.success
+        assert result.data["returned"] == 3
+
+    def test_invalid_method(self, sample_df):
+        tool = Preview()
+        result = tool.execute(sample_df, method="middle")
+        assert not result.success
+
+    def test_invalid_n(self, sample_df):
+        tool = Preview()
+        result = tool.execute(sample_df, n=0)
+        assert not result.success
+
+
+class TestColumnSelect:
+    def test_select_columns(self, sample_df):
+        tool = ColumnSelect()
+        result = tool.execute(sample_df, columns=["category", "value"])
+        assert result.success
+        assert result.data["columns"] == ["category", "value"]
+        assert len(result.data["rows"]) == 5
+
+    def test_invalid_column(self, sample_df):
+        tool = ColumnSelect()
+        result = tool.execute(sample_df, columns=["bad"])
+        assert not result.success
+
+    def test_empty_columns(self, sample_df):
+        tool = ColumnSelect()
+        result = tool.execute(sample_df, columns=[])
+        assert not result.success
+
+    def test_select_single(self, sample_df):
+        tool = ColumnSelect()
+        result = tool.execute(sample_df, columns=["value"])
+        assert result.success
+        assert list(result.data["rows"][0].keys()) == ["value"]

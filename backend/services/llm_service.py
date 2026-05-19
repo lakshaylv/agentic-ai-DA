@@ -20,23 +20,21 @@ You have access to these tools:
 {tools_description}
 
 Rules:
-1. You MUST call at least one tool before marking complete. You cannot see the data directly.
-2. Most analytical questions require multiple tool calls (inspect schema, look for missing values, group/filter).
-3. Do NOT stop after a single tool call unless the query is fully answered.
-4. Only set "complete": true when the data has been fully analyzed and the query is answered.
+1. Call tools to gather data. Once you have the answer, set "complete": true.
+2. Always call schema_inspector first if you need to see column names.
+3. Use exact column names from the data.
 
-Always respond in JSON with this exact structure:
-{{
-  "analysis": "your reasoning about the current state",
-  "next_tool": "tool_name or null if analysis is complete",
-  "params": {{ ... }},
-  "complete": false,
-  "chart_type": null,
-  "chart_spec": null,
-  "insights": []
-}}
+Response must be ONLY a JSON object with these fields:
+- "analysis": your reasoning (string)
+- "next_tool": tool name to call, or null when done
+- "params": {{}} for tool arguments, empty object if no args
+- "complete": false while working, true when done
+- "chart_type": "bar"/"line"/null
+- "chart_spec": null or {{"type": "...", "x": "...", "y": "..."}}
+- "insights": [] while working, or ["finding 1", "finding 2"]
 
-Respond ONLY with valid JSON. No markdown, no code fences, no extra text."""
+Example working response: {{"analysis": "Checking schema.", "next_tool": "schema_inspector", "params": {{}}, "complete": false, "chart_type": null, "chart_spec": null, "insights": []}}
+Example done response: {{"analysis": "North has the highest price at $8303.", "next_tool": null, "params": {{}}, "complete": true, "chart_type": "bar", "chart_spec": {{"type": "bar", "x": "region", "y": "price"}}, "insights": ["North region leads in total price."]}}"""
 
 
 def _build_tools_description(tools: list[ToolSignature]) -> str:
@@ -101,35 +99,39 @@ def _call_gemini(
     if system_prompt:
         genai_config["system_instruction"] = system_prompt
 
-    try:
-        response = client.models.generate_content(
-            model=config.model,
-            contents=contents,
-            config=genai_config,
-        )
-    except Exception as e:
-        error_str = str(e)
-        if "RESOURCE_EXHAUSTED" in error_str or "quota" in error_str.lower():
+    max_attempts = 2
+    for attempt in range(max_attempts):
+        try:
+            response = client.models.generate_content(
+                model=config.model,
+                contents=contents,
+                config=genai_config,
+            )
+        except Exception as e:
+            error_str = str(e)
+            if "RESOURCE_EXHAUSTED" in error_str or "quota" in error_str.lower():
+                return LLMDecision(
+                    analysis="LLM API quota exhausted. Please wait or switch to a different provider.",
+                    next_tool=None,
+                    complete=False,
+                )
             return LLMDecision(
-                analysis="LLM API quota exhausted. Please wait or switch to a different provider.",
+                analysis=f"LLM API error: {error_str}",
                 next_tool=None,
                 complete=False,
             )
-        return LLMDecision(
-            analysis=f"LLM API error: {error_str}",
-            next_tool=None,
-            complete=False,
-        )
 
-    try:
-        data = json.loads(response.text)
-        return LLMDecision(**data)
-    except (json.JSONDecodeError, Exception) as e:
-        return LLMDecision(
-            analysis=f"Failed to parse LLM response: {e}",
-            next_tool=None,
-            complete=False,
-        )
+        try:
+            data = json.loads(response.text)
+            return LLMDecision(**data)
+        except (json.JSONDecodeError, Exception) as e:
+            if attempt < max_attempts - 1:
+                continue
+            return LLMDecision(
+                analysis=f"Failed to parse LLM response after retry: {e}",
+                next_tool=None,
+                complete=False,
+            )
 
 
 def _extract_json(text: str) -> str:
@@ -142,7 +144,8 @@ def _extract_json(text: str) -> str:
     last = text.rfind("}")
     if first != -1 and last != -1 and last > first:
         text = text[first : last + 1]
-    return text
+        return text
+    return ""
 
 
 def _call_openai(
@@ -167,41 +170,46 @@ def _call_openai(
         msgs.append({"role": role, "content": text})
 
     model = config.model or "deepseek/deepseek-v4-flash:free"
+    kwargs = {"model": model, "messages": msgs, "temperature": 0.2}
+    if "localhost" in config.base_url or "11434" in config.base_url:
+        kwargs["response_format"] = {"type": "json_object"}
 
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=msgs,
-            temperature=0.2,
-        )
-    except Exception as e:
-        error_str = str(e)
-        if "insufficient_quota" in error_str or "rate_limit" in error_str.lower():
+    max_attempts = 2
+    for attempt in range(max_attempts):
+        try:
+            response = client.chat.completions.create(**kwargs)
+        except Exception as e:
+            error_str = str(e)
+            if "insufficient_quota" in error_str or "rate_limit" in error_str.lower() or "rate limit" in error_str.lower():
+                return LLMDecision(
+                    analysis="LLM API rate limited or quota exhausted. Please wait or switch provider.",
+                    next_tool=None,
+                    complete=False,
+                )
             return LLMDecision(
-                analysis="LLM API rate limited or quota exhausted. Please wait or switch provider.",
+                analysis=f"LLM API error: {error_str}",
                 next_tool=None,
                 complete=False,
             )
-        return LLMDecision(
-            analysis=f"LLM API error: {error_str}",
-            next_tool=None,
-            complete=False,
-        )
 
-    try:
-        content = response.choices[0].message.content
-        if not content:
+        try:
+            content = response.choices[0].message.content
+            if not content:
+                if attempt < max_attempts - 1:
+                    continue
+                return LLMDecision(
+                    analysis="LLM returned empty response after retry",
+                    next_tool=None,
+                    complete=False,
+                )
+            cleaned = _extract_json(content)
+            data = json.loads(cleaned)
+            return LLMDecision(**data)
+        except (json.JSONDecodeError, Exception) as e:
+            if attempt < max_attempts - 1:
+                continue
             return LLMDecision(
-                analysis="LLM returned empty response",
+                analysis=f"Failed to parse LLM response after retry: {e}",
                 next_tool=None,
                 complete=False,
             )
-        cleaned = _extract_json(content)
-        data = json.loads(cleaned)
-        return LLMDecision(**data)
-    except (json.JSONDecodeError, Exception) as e:
-        return LLMDecision(
-            analysis=f"Failed to parse LLM response: {e}",
-            next_tool=None,
-            complete=False,
-        )

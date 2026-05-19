@@ -4,6 +4,29 @@ import json
 
 API_BASE = "http://localhost:8000"
 
+
+def _to_vega_lite(spec: dict) -> dict:
+    if not spec:
+        return spec
+    if "mark" in spec or "layer" in spec:
+        return spec
+    x_field = spec.get("x") or spec.get("x_axis", "")
+    y_field = spec.get("y") or spec.get("y_axis", "")
+    type_map = {"bar": "bar", "line": "line", "scatter": "point"}
+    mark_type = type_map.get(spec.get("type", "bar"), "bar")
+    chart = {
+        "mark": {"type": mark_type},
+        "encoding": {
+            "x": {"field": x_field, "type": "nominal"},
+            "y": {"field": y_field, "type": "quantitative"},
+        },
+        "title": spec.get("title", ""),
+    }
+    if spec.get("data"):
+        chart["data"] = {"values": spec["data"]}
+    return chart
+
+
 st.set_page_config(page_title="AI Data Analyst", layout="wide")
 st.title("AI Data Analyst Agent")
 
@@ -69,7 +92,8 @@ if st.button("Analyze", disabled=not st.session_state.session_id or not query.st
     if result.get("chart_spec"):
         st.subheader("Chart")
         try:
-            st.vega_lite_chart(result["chart_spec"], use_container_width=True)
+            spec = _to_vega_lite(result["chart_spec"])
+            st.vega_lite_chart(spec, use_container_width=True)
         except Exception as e:
             st.warning(f"Could not render chart: {e}")
 

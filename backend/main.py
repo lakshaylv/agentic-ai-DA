@@ -1,3 +1,8 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from fastapi import FastAPI, UploadFile, File
 import pandas as pd
 import io
@@ -8,6 +13,10 @@ from backend.services.llm_service import LLMConfig
 from backend.tools.registry import ToolRegistry
 from backend.tools.inspection import SchemaInspector, MissingValueAnalyzer
 from backend.tools.operations import GroupBy, FilterTool, DeriveAggregate
+from backend.tools.analysis import (
+    SortTopK, ValueCounts, SummaryStats, Correlation,
+    DateExtract, PivotTable, Preview, ColumnSelect,
+)
 from backend.agent.orchestrator import run_analysis
 
 registry = ToolRegistry()
@@ -16,8 +25,20 @@ registry.register(MissingValueAnalyzer())
 registry.register(GroupBy())
 registry.register(FilterTool())
 registry.register(DeriveAggregate())
+registry.register(SortTopK())
+registry.register(ValueCounts())
+registry.register(SummaryStats())
+registry.register(Correlation())
+registry.register(DateExtract())
+registry.register(PivotTable())
+registry.register(Preview())
+registry.register(ColumnSelect())
 
 llm_config = LLMConfig()
+if os.environ.get("LLM_PROVIDER", "").lower() == "ollama":
+    llm_config.base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+    llm_config.model = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:3b")
+    llm_config.api_key = "ollama"
 
 app = FastAPI(
     title="AI Data Analyst Agent Backend",

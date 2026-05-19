@@ -1,9 +1,20 @@
+import math
 import time
 from abc import ABC, abstractmethod
 
 import pandas as pd
 
 from backend.models.schemas import ToolMetadata, ToolResponse
+
+
+def _clean_nan(obj):
+    if isinstance(obj, float) and math.isnan(obj):
+        return None
+    if isinstance(obj, dict):
+        return {k: _clean_nan(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_clean_nan(v) for v in obj]
+    return obj
 
 
 class BaseTool(ABC):
@@ -23,7 +34,7 @@ class BaseTool(ABC):
     def execute(self, df: pd.DataFrame, **params) -> ToolResponse:
         start = time.perf_counter()
         try:
-            data = self._execute(df, **params)
+            data = _clean_nan(self._execute(df, **params))
             elapsed_ms = int((time.perf_counter() - start) * 1000)
             metadata = ToolMetadata(
                 tool_name=self.name,

@@ -20,7 +20,9 @@ def run_analysis(
     if llm_config is None:
         llm_config = LLMConfig()
 
-    conversation = [{"role": "user", "content": query}]
+    col_info = f"Columns: {', '.join(df.columns)}. Rows: {df.shape[0]}."
+    prompt = f"{col_info}\nQuery: {query}"
+    conversation = [{"role": "user", "content": prompt}]
     tool_results = []
     error = None
     consecutive_failures = 0
@@ -38,6 +40,13 @@ def run_analysis(
             break
 
         if decision.complete:
+            chart_spec = decision.chart_spec
+            if chart_spec and not chart_spec.get("data") and tool_results:
+                last_data = tool_results[-1].get("response", {}).get("data", {})
+                if isinstance(last_data, dict):
+                    grouped = last_data.get("grouped") or last_data.get("value_counts")
+                    if grouped:
+                        chart_spec = {**chart_spec, "data": grouped}
             return AnalysisResult(
                 session_id=session_id,
                 query=query,
@@ -45,7 +54,7 @@ def run_analysis(
                 iterations=i + 1,
                 insights=decision.insights,
                 chart_type=decision.chart_type,
-                chart_spec=decision.chart_spec,
+                chart_spec=chart_spec,
                 tool_results=tool_results,
                 error=None,
             )
