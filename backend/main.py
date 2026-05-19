@@ -2,7 +2,21 @@ from fastapi import FastAPI, UploadFile, File
 import pandas as pd
 import io
 
+from backend.models.schemas import AnalyzeRequest
 from backend.services.session_service import session_store
+from backend.services.llm_service import LLMConfig
+from backend.tools.registry import ToolRegistry
+from backend.tools.inspection import SchemaInspector, MissingValueAnalyzer
+from backend.tools.operations import GroupBy, FilterTool
+from backend.agent.orchestrator import run_analysis
+
+registry = ToolRegistry()
+registry.register(SchemaInspector())
+registry.register(MissingValueAnalyzer())
+registry.register(GroupBy())
+registry.register(FilterTool())
+
+llm_config = LLMConfig()
 
 app = FastAPI(
     title="AI Data Analyst Agent Backend",
@@ -34,6 +48,21 @@ async def list_sessions():
 async def delete_session(session_id: str):
     deleted = session_store.delete(session_id)
     return {"deleted": deleted}
+
+@app.post("/analyze")
+async def analyze_session(req: AnalyzeRequest):
+    df = session_store.get(req.session_id)
+    if df is None:
+        return {"error": f"Session '{req.session_id}' not found"}
+
+    result = run_analysis(
+        df=df,
+        query=req.query,
+        session_id=req.session_id,
+        registry=registry,
+        llm_config=llm_config,
+    )
+    return result.model_dump()
 
 # Future backend expansion points:
 # @app.include_router(api_router, prefix="/api/v1")

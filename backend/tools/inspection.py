@@ -4,6 +4,8 @@ from backend.tools.base import BaseTool
 
 
 class SchemaInspector(BaseTool):
+    """Inspect column names, data types, and shape of the dataset. No parameters required."""
+
     @property
     def name(self) -> str:
         return "schema_inspector"
@@ -19,6 +21,8 @@ class SchemaInspector(BaseTool):
 
 
 class MissingValueAnalyzer(BaseTool):
+    """Analyze missing values across all columns. No parameters required."""
+
     @property
     def name(self) -> str:
         return "missing_value_analyzer"

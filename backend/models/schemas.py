@@ -31,3 +31,20 @@ class LLMDecision(BaseModel):
     chart_type: Optional[str] = None
     chart_spec: Optional[dict] = None
     insights: list[str] = []
+
+
+class AnalyzeRequest(BaseModel):
+    session_id: str
+    query: str
+
+
+class AnalysisResult(BaseModel):
+    session_id: str
+    query: str
+    complete: bool
+    iterations: int
+    insights: list[str]
+    chart_type: Optional[str] = None
+    chart_spec: Optional[dict] = None
+    tool_results: list[dict] = []
+    error: Optional[str] = None

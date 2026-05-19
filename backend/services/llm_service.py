@@ -18,6 +18,11 @@ You have access to these tools:
 
 {tools_description}
 
+Work step by step:
+1. Choose ONE tool per turn to move toward answering the user's query
+2. After a tool returns results, evaluate them and decide the next step
+3. Only set "complete": true when the original query is fully answered
+
 Always respond in JSON with this exact structure:
 {{
   "analysis": "your reasoning about the current state",
@@ -29,7 +34,7 @@ Always respond in JSON with this exact structure:
   "insights": []
 }}
 
-If the analysis is complete, set "complete" to true, provide chart and insight data, and set next_tool to null."""
+When complete, set next_tool to null, complete to true, and include insights and chart data if applicable."""
 
 
 def _build_tools_description(tools: list[ToolSignature]) -> str:

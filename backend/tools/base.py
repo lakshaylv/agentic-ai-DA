@@ -12,6 +12,10 @@ class BaseTool(ABC):
     def name(self) -> str:
         ...
 
+    @property
+    def param_schema(self) -> dict:
+        return {}
+
     @abstractmethod
     def _execute(self, df: pd.DataFrame, **params) -> dict:
         ...
