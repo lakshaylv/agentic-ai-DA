@@ -27,15 +27,15 @@ The system uses a **bounded autonomy** architecture: the LLM orchestrates predef
 
 ---
 
-### Regional Sales Analysis
+### Agentic Regional Sales Workflow
 
-![Regional Sales](assets/regional-sales.png)
+![Agentic Regional Sales Workflow](assets/regional-sales.png)
 
 ---
 
-### Top Profitable Products
+### Top Product Profitability Analysis
 
-![Top Products](assets/top-products.png)
+![Top Product Profitability](assets/top-products.png)
 
 ---
 
@@ -45,9 +45,9 @@ The system uses a **bounded autonomy** architecture: the LLM orchestrates predef
 
 ---
 
-### Multi-Step Orchestration Trace
+### Category Analysis: Schema-to-Insight Workflow
 
-![Orchestration Trace](assets/orchestration-trace.png)
+![Category Analysis: Schema-to-Insight Workflow](assets/orchestration-trace.png)
 
 ---
 
