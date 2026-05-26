@@ -4,6 +4,25 @@ An AI-powered analytics platform that lets you upload CSV datasets, ask question
 
 The system uses a **bounded autonomy** architecture: the LLM orchestrates predefined analytical tools instead of directly manipulating dataframes, ensuring safe and predictable execution.
 
+### Why Bounded Autonomy?
+
+Most AI analytics tools let the LLM generate arbitrary code (Python, SQL) and execute it directly — powerful but risky. The LLM can produce incorrect or unsafe operations that corrupt data or produce misleading results.
+
+This project takes a different approach: the LLM **never directly manipulates data or executes code**. Instead, it selects from a predefined set of analytical tools, and the backend executes them safely within validated boundaries.
+
+- **Safer** — No arbitrary code execution, no SQL injection, no accidental data corruption
+- **Predictable** — Every tool has a defined contract with validated parameters
+- **Transparent** — Every step is logged in the execution trace, making analysis reproducible and auditable
+- **Reliable** — Error boundaries and iteration limits prevent runaway or infinite-loop behavior
+
+### Core Concepts
+
+- **Bounded Autonomy** — The LLM operates within a fixed tool registry, finite iterations, and backend-enforced validation
+- **Tool Orchestration** — The LLM chains analytical tools (filter, group, aggregate, pivot) autonomously based on the user's natural-language query
+- **Iterative Reasoning Loop** — Each iteration: LLM analyzes tool results → decides next step → calls a tool → receives new data, repeating until the answer is complete
+- **Structured JSON Contracts** — All LLM-to-system communication uses Pydantic-validated models, not freeform text
+- **Execution Trace Transparency** — Every tool call, parameter, response, and execution time is logged and displayed in the UI
+
 ---
 
 ## Features
