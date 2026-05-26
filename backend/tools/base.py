@@ -31,6 +31,9 @@ class BaseTool(ABC):
     def _execute(self, df: pd.DataFrame, **params) -> dict:
         ...
 
+    def mutate(self, df: pd.DataFrame, **params) -> pd.DataFrame | None:
+        return None
+
     def execute(self, df: pd.DataFrame, **params) -> ToolResponse:
         start = time.perf_counter()
         try:

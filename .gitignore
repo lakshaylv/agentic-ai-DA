@@ -3,3 +3,4 @@
 ai_analyst_env/
 __pycache__/
 *.pyc
+.opencode/

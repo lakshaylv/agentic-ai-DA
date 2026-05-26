@@ -12,7 +12,7 @@ from backend.services.session_service import session_store
 from backend.services.llm_service import LLMConfig
 from backend.tools.registry import ToolRegistry
 from backend.tools.inspection import SchemaInspector, MissingValueAnalyzer
-from backend.tools.operations import GroupBy, FilterTool, DeriveAggregate
+from backend.tools.operations import GroupBy, FilterTool, DeriveAggregate, Reset
 from backend.tools.analysis import (
     SortTopK, ValueCounts, SummaryStats, Correlation,
     DateExtract, PivotTable, Preview, ColumnSelect,
@@ -33,12 +33,17 @@ registry.register(DateExtract())
 registry.register(PivotTable())
 registry.register(Preview())
 registry.register(ColumnSelect())
+registry.register(Reset())
 
 llm_config = LLMConfig()
 if os.environ.get("LLM_PROVIDER", "").lower() == "ollama":
     llm_config.base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
     llm_config.model = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:3b")
     llm_config.api_key = "ollama"
+else:
+    model_override = os.environ.get("OPENAI_MODEL")
+    if model_override:
+        llm_config.model = model_override
 
 app = FastAPI(
     title="AI Data Analyst Agent Backend",
@@ -53,7 +58,11 @@ async def health_check():
 @app.post("/upload")
 async def upload_csv(file: UploadFile = File(...)):
     contents = await file.read()
-    df = pd.read_csv(io.StringIO(contents.decode('utf-8')))
+    try:
+        text = contents.decode('utf-8')
+    except UnicodeDecodeError:
+        text = contents.decode('latin-1')
+    df = pd.read_csv(io.StringIO(text))
     session_id = session_store.create(df, filename=file.filename or "")
     return {
         "session_id": session_id,

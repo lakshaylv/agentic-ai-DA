@@ -9,7 +9,7 @@ from backend.models.schemas import LLMDecision, ToolSignature
 class LLMConfig:
     provider: str = "openai"
     api_key: str = ""
-    model: str = "deepseek/deepseek-v4-flash:free"
+    model: str = "deepseek/deepseek-v4-flash"
     base_url: str = "https://openrouter.ai/api/v1"
     tools: list[ToolSignature] = field(default_factory=list)
 
@@ -19,10 +19,26 @@ You have access to these tools:
 
 {tools_description}
 
+Data flow:
+- Each question starts from the original dataset.
+- Tools operate on a "working" copy that accumulates changes within a question.
+- MODIFYING tools: filter (reduces rows), derive_aggregate (adds columns), reset (restores original)
+- READ-ONLY tools: schema_inspector, groupby, sort_topk, value_counts, summary_stats, correlation, date_extract, pivot_table, preview, column_select
+- After a filter, ALL subsequent tools see only the filtered rows.
+- After derive_aggregate, the new derived column is available for ALL subsequent tools.
+- Use "reset" to discard all changes and work with the original dataset again.
+- groupby with order="desc" and limit=N directly returns top N rows — no need for sort_topk after groupby.
+- sort_topk operates on the raw rows of the current working dataset (not grouped data).
+
 Rules:
 1. Call tools to gather data. Once you have the answer, set "complete": true.
 2. Always call schema_inspector first if you need to see column names.
 3. Use exact column names from the data.
+4. Insights must include specific numbers and at least 2 distinct findings.
+5. INSIGHT STYLE: Write short, plain-text sentences. No markdown, no italics, no bold, no emphasis, no parenthetical prose. Keep spacing clean — "led by the" NOT "ledbythe".
+   Preferred: "West region has the highest total profit at 108,418.45."
+   Avoid:     "West region has highest total profit (108,418.45), led by the Consumer segment..."
+   Never put spaces after commas inside numbers — "41,190" NOT "41, 190".
 
 Response must be ONLY a JSON object with these fields:
 - "analysis": your reasoning (string)
@@ -34,7 +50,7 @@ Response must be ONLY a JSON object with these fields:
 - "insights": [] while working, or ["finding 1", "finding 2"]
 
 Example working response: {{"analysis": "Checking schema.", "next_tool": "schema_inspector", "params": {{}}, "complete": false, "chart_type": null, "chart_spec": null, "insights": []}}
-Example done response: {{"analysis": "North has the highest price at $8303.", "next_tool": null, "params": {{}}, "complete": true, "chart_type": "bar", "chart_spec": {{"type": "bar", "x": "region", "y": "price"}}, "insights": ["North region leads in total price."]}}"""
+Example done response: {{"analysis": "North has the highest price at $8303.", "next_tool": null, "params": {{}}, "complete": true, "chart_type": "bar", "chart_spec": {{"type": "bar", "x": "region", "y": "price"}}, "insights": ["North leads with $8303 total price.", "East is second at $5159.", "South and West are significantly lower at $2911 and $2072."]}}"""
 
 
 def _build_tools_description(tools: list[ToolSignature]) -> str:
@@ -170,9 +186,7 @@ def _call_openai(
         msgs.append({"role": role, "content": text})
 
     model = config.model or "deepseek/deepseek-v4-flash:free"
-    kwargs = {"model": model, "messages": msgs, "temperature": 0.2}
-    if "localhost" in config.base_url or "11434" in config.base_url:
-        kwargs["response_format"] = {"type": "json_object"}
+    kwargs = {"model": model, "messages": msgs, "temperature": 0.2, "response_format": {"type": "json_object"}}
 
     max_attempts = 2
     for attempt in range(max_attempts):

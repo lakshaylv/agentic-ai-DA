@@ -1,5 +1,5 @@
 from backend.tools.inspection import SchemaInspector, MissingValueAnalyzer
-from backend.tools.operations import GroupBy, FilterTool, DeriveAggregate
+from backend.tools.operations import GroupBy, FilterTool, DeriveAggregate, Reset
 from backend.tools.analysis import (
     SortTopK, ValueCounts, SummaryStats, Correlation,
     DateExtract, PivotTable, Preview, ColumnSelect,
@@ -162,11 +162,12 @@ class TestDeriveAggregate:
         result = tool.execute(sample_df, group_col="category", col1="value", col2="score", operation="power")
         assert not result.success
 
-    def test_original_df_not_mutated(self, sample_df):
+    def test_derived_column_persists_on_df(self, sample_df):
         original_cols = set(sample_df.columns)
         tool = DeriveAggregate()
         tool.execute(sample_df, group_col="category", col1="value", col2="score", operation="multiply")
-        assert set(sample_df.columns) == original_cols
+        expected_cols = original_cols | {"value_multiply_score"}
+        assert set(sample_df.columns) == expected_cols
 
 
 class TestSortTopK:
@@ -398,3 +399,93 @@ class TestColumnSelect:
         result = tool.execute(sample_df, columns=["value"])
         assert result.success
         assert list(result.data["rows"][0].keys()) == ["value"]
+
+
+class TestGroupByOrderLimit:
+    def test_order_desc(self, sample_df):
+        tool = GroupBy()
+        result = tool.execute(sample_df, group_col="category", metric="value", aggregation="sum", order="desc")
+        assert result.success
+        vals = [r["value"] for r in result.data["grouped"]]
+        assert vals == sorted(vals, reverse=True)
+        assert result.data["order"] == "desc"
+
+    def test_order_asc(self, sample_df):
+        tool = GroupBy()
+        result = tool.execute(sample_df, group_col="category", metric="value", aggregation="sum", order="asc")
+        assert result.success
+        vals = [r["value"] for r in result.data["grouped"]]
+        assert vals == sorted(vals)
+
+    def test_limit(self, sample_df):
+        tool = GroupBy()
+        result = tool.execute(sample_df, group_col="category", metric="value", aggregation="sum", limit=2)
+        assert result.success
+        assert len(result.data["grouped"]) == 2
+        assert result.data["limit"] == 2
+
+    def test_order_desc_with_limit(self, sample_df):
+        tool = GroupBy()
+        result = tool.execute(
+            sample_df, group_col="category", metric="value", aggregation="sum", order="desc", limit=2,
+        )
+        assert result.success
+        assert len(result.data["grouped"]) == 2
+        assert result.data["grouped"][0]["value"] == 70  # A=30, B=70, C=50 -> desc top 2: B=70, C=50
+
+    def test_invalid_order(self, sample_df):
+        tool = GroupBy()
+        result = tool.execute(sample_df, group_col="category", metric="value", order="invalid")
+        assert not result.success
+
+    def test_invalid_limit(self, sample_df):
+        tool = GroupBy()
+        result = tool.execute(sample_df, group_col="category", metric="value", limit=0)
+        assert not result.success
+
+
+class TestFilterMutate:
+    def test_mutate_returns_filtered_copy(self, sample_df):
+        tool = FilterTool()
+        result = tool.execute(sample_df, column="category", operator="eq", value="A")
+        assert result.success
+
+        mutated = tool.mutate(sample_df, column="category", operator="eq", value="A")
+        assert mutated is not None
+        assert len(mutated) == 2
+        assert list(mutated["category"]) == ["A", "A"]
+
+    def test_mutate_gt(self, sample_df):
+        tool = FilterTool()
+        mutated = tool.mutate(sample_df, column="value", operator="gt", value=25)
+        assert mutated is not None
+        assert len(mutated) == 3
+
+    def test_mutate_no_match(self, sample_df):
+        tool = FilterTool()
+        mutated = tool.mutate(sample_df, column="value", operator="gt", value=100)
+        assert mutated is not None
+        assert len(mutated) == 0
+
+    def test_mutate_does_not_affect_original(self, sample_df):
+        original_len = len(sample_df)
+        tool = FilterTool()
+        tool.mutate(sample_df, column="category", operator="eq", value="A")
+        assert len(sample_df) == original_len
+
+
+class TestReset:
+    def test_reset_execute(self, sample_df):
+        tool = Reset()
+        result = tool.execute(sample_df)
+        assert result.success
+        assert "reset" in result.data["message"].lower()
+
+    def test_reset_param_schema(self):
+        tool = Reset()
+        assert tool.param_schema == {}
+
+    def test_reset_mutate_default(self, sample_df):
+        tool = Reset()
+        result = tool.mutate(sample_df)
+        assert result is None  # Reset doesn't override mutate — orchestrator handles it

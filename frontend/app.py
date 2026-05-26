@@ -27,8 +27,8 @@ def _to_vega_lite(spec: dict) -> dict:
     return chart
 
 
-st.set_page_config(page_title="AI Data Analyst", layout="wide")
-st.title("AI Data Analyst Agent")
+st.set_page_config(page_title="Agentic AI Data Analyst", layout="wide")
+st.title("Agentic AI Data Analyst")
 
 if "session_id" not in st.session_state:
     st.session_state.session_id = None
@@ -87,15 +87,21 @@ if st.button("Analyze", disabled=not st.session_state.session_id or not query.st
     if result.get("insights"):
         st.subheader("Insights")
         for ins in result["insights"]:
-            st.markdown(f"- {ins}")
+            st.write(f"- {ins}")
 
-    if result.get("chart_spec"):
+    chart_spec = result.get("chart_spec")
+    if chart_spec and chart_spec.get("x") and chart_spec.get("y") and chart_spec.get("type"):
         st.subheader("Chart")
-        try:
-            spec = _to_vega_lite(result["chart_spec"])
-            st.vega_lite_chart(spec, use_container_width=True)
-        except Exception as e:
-            st.warning(f"Could not render chart: {e}")
+        data = chart_spec.get("data", [])
+        if len(data) <= 1:
+            st.write("**Data:**")
+            st.json(data)
+        else:
+            try:
+                spec = _to_vega_lite(chart_spec)
+                st.vega_lite_chart(spec, use_container_width=True)
+            except Exception as e:
+                st.warning(f"Could not render chart: {e}")
 
     if result.get("tool_results"):
         st.subheader("Tool Execution Trace")

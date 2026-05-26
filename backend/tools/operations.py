@@ -3,6 +3,8 @@ import pandas as pd
 from backend.tools.base import BaseTool
 
 
+SUPPORTED_ORDER = {"none", "asc", "desc"}
+
 SUPPORTED_AGGREGATIONS = {"sum", "mean", "median", "min", "max", "count", "std", "var"}
 
 DERIVE_OPERATIONS = {
@@ -41,15 +43,32 @@ class GroupBy(BaseTool):
                 "default": "sum",
                 "enum": sorted(SUPPORTED_AGGREGATIONS),
             },
+            "order": {
+                "type": "string",
+                "description": "Sort results by metric column (use 'desc' for top/highest first, 'asc' for bottom/lowest first)",
+                "default": "none",
+                "enum": sorted(SUPPORTED_ORDER),
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max rows to return (combine with order to get top/bottom N)",
+            },
         }
 
-    def _execute(self, df: pd.DataFrame, group_col: str, metric: str, aggregation: str = "sum") -> dict:
+    def _execute(
+        self, df: pd.DataFrame, group_col: str, metric: str,
+        aggregation: str = "sum", order: str = "none", limit: int | None = None,
+    ) -> dict:
         if group_col not in df.columns:
             raise ValueError(f"Column '{group_col}' not found. Available: {df.columns.tolist()}")
         if metric not in df.columns:
             raise ValueError(f"Column '{metric}' not found. Available: {df.columns.tolist()}")
         if aggregation not in SUPPORTED_AGGREGATIONS:
             raise ValueError(f"Unsupported aggregation '{aggregation}'. Supported: {sorted(SUPPORTED_AGGREGATIONS)}")
+        if order not in SUPPORTED_ORDER:
+            raise ValueError(f"Unsupported order '{order}'. Supported: {sorted(SUPPORTED_ORDER)}")
+        if limit is not None and limit < 1:
+            raise ValueError("limit must be >= 1")
 
         if group_col == metric:
             grouped = df.groupby(group_col).size().reset_index(name=f"{metric}_{aggregation}")
@@ -59,11 +78,21 @@ class GroupBy(BaseTool):
         for col in grouped.select_dtypes(include="number").columns:
             grouped[col] = grouped[col].round(2)
 
+        if order == "asc":
+            grouped = grouped.sort_values(metric, ascending=True)
+        elif order == "desc":
+            grouped = grouped.sort_values(metric, ascending=False)
+
+        if limit is not None:
+            grouped = grouped.head(limit)
+
         return {
             "grouped": grouped.to_dict(orient="records"),
             "group_col": group_col,
             "metric": metric,
             "aggregation": aggregation,
+            "order": order,
+            "limit": limit,
         }
 
 
@@ -105,6 +134,28 @@ class FilterTool(BaseTool):
             "value": str(value),
             "preview": filtered.head(10).to_dict(orient="records"),
         }
+
+    def mutate(self, df: pd.DataFrame, **params) -> pd.DataFrame | None:
+        column = params["column"]
+        operator = params.get("operator", "eq")
+        value = params.get("value")
+        mask = SUPPORTED_OPERATORS[operator](df[column], value)
+        return df[mask].copy()
+
+
+class Reset(BaseTool):
+    """Reset the working dataset to its original state. Discards all filters and derived columns."""
+
+    @property
+    def name(self) -> str:
+        return "reset"
+
+    @property
+    def param_schema(self) -> dict:
+        return {}
+
+    def _execute(self, df: pd.DataFrame, **params) -> dict:
+        return {"message": "Reset complete. The working dataset has been restored to its original state."}
 
 
 class DeriveAggregate(BaseTool):
@@ -155,11 +206,10 @@ class DeriveAggregate(BaseTool):
             raise ValueError(f"Unsupported aggregation '{aggregation}'. Supported: {sorted(SUPPORTED_AGGREGATIONS)}")
 
         op_func = DERIVE_OPERATIONS[operation]
-        temp = df.copy()
         derived_col = f"{col1}_{operation}_{col2}"
-        temp[derived_col] = op_func(temp[col1], temp[col2])
+        df[derived_col] = op_func(df[col1], df[col2])
 
-        result = temp.groupby(group_col)[derived_col].agg(aggregation).reset_index()
+        result = df.groupby(group_col)[derived_col].agg(aggregation).reset_index()
         result[group_col] = result[group_col].astype(str)
 
         return {

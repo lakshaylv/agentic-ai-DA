@@ -1,10 +1,19 @@
-import json
+import re
 
 import pandas as pd
 
-from backend.models.schemas import AnalysisResult
+from backend.models.schemas import AnalysisResult, ToolMetadata, ToolResponse
 from backend.services.llm_service import LLMConfig, analyze as llm_analyze
 from backend.tools.registry import ToolRegistry
+
+
+def _clean_insight(text: str) -> str:
+    text = " ".join(text.split())
+    text = re.sub(r"\)(\w)", r") \1", text)
+    text = re.sub(r"(\d), (\d{3})", r"\1,\2", text)
+    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
+    text = text.replace("*", "").replace("_", "")
+    return text
 
 
 def run_analysis(
@@ -27,6 +36,7 @@ def run_analysis(
     error = None
     consecutive_failures = 0
     max_consecutive_failures = 3
+    working_df = df.copy()
 
     for i in range(max_iterations):
         decision = llm_analyze(
@@ -44,22 +54,38 @@ def run_analysis(
             if chart_spec and not chart_spec.get("data") and tool_results:
                 last_data = tool_results[-1].get("response", {}).get("data", {})
                 if isinstance(last_data, dict):
-                    grouped = last_data.get("grouped") or last_data.get("value_counts")
+                    grouped = last_data.get("grouped") or last_data.get("value_counts") or last_data.get("pivot")
                     if grouped:
                         chart_spec = {**chart_spec, "data": grouped}
+            clean_insights = [_clean_insight(ins) for ins in decision.insights]
             return AnalysisResult(
                 session_id=session_id,
                 query=query,
                 complete=True,
                 iterations=i + 1,
-                insights=decision.insights,
+                insights=clean_insights,
                 chart_type=decision.chart_type,
                 chart_spec=chart_spec,
                 tool_results=tool_results,
                 error=None,
             )
 
-        response = registry.execute(decision.next_tool, df, **decision.params)
+        if decision.next_tool == "reset":
+            working_df = df.copy()
+            response = ToolResponse(
+                success=True,
+                data={"message": "Reset complete. All filters and derived columns cleared."},
+                metadata=ToolMetadata(tool_name="reset", execution_time_ms=0),
+            )
+        else:
+            response = registry.execute(decision.next_tool, working_df, **decision.params)
+            if response.success:
+                tool = registry.get(decision.next_tool)
+                if tool is not None:
+                    new_df = tool.mutate(working_df, **decision.params)
+                    if new_df is not None:
+                        working_df = new_df
+
         tool_results.append({
             "tool": decision.next_tool,
             "params": decision.params,
